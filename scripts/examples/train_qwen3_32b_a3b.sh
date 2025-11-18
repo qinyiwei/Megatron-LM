@@ -50,7 +50,7 @@ mkdir -p "$LOG_DIR"
 
 # ===== 数据集配制 =====
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATA_PATH="$CURRENT_DIR/dataset_config_stage_1_1.json"
+DATA_PATH="$CURRENT_DIR/dataset_config.json"
 
 echo "📁 配置文件路径: $DATA_PATH"
 if [ -f "$DATA_PATH" ]; then

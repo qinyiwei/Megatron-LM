@@ -4,7 +4,7 @@ cd /inspire/ssd/project/qproject-fundationmodel/public/yiwei/megatron-workspace/
 source /inspire/ssd/project/qproject-fundationmodel/public/yiwei/megatron-workspace/env/megatron/bin/activate
 
 CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATASET_CONFIG_FILE="$CURRENT_DIR/dataset_config_stage_1_1.json"
+DATASET_CONFIG_FILE="$CURRENT_DIR/dataset_config.json"
 
 echo "📁 配置文件路径: $DATASET_CONFIG_FILE"
 if [ -f "$DATASET_CONFIG_FILE" ]; then
@@ -30,7 +30,6 @@ SEQ_LENGTH=4096
 GBS=1024
 MBS=4
 MODEL_NAME="qwen25_3b"
-DATASET_NAME=debug_dataset
 
 # ===== 并行配制 =====
 SEQUENCE_PARALLEL="false"
