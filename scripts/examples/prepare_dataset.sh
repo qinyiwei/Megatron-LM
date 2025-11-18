@@ -18,7 +18,7 @@ MODEL_NAME="Qwen3-30B-A3B"
 DATASET_NAME="pt_11_18_6TB"
 STAGE="stage_1_1_1"
 EXPERIMENT_NAME="${MODEL_NAME}_${DATASET_NAME}_${STAGE}"
-OUTPUT_PATH="/inspire/hdd/project/qproject-fundationmodel/public/yiwei/megatron-workspace/experiments/pt_30b_a3b_from_scratch_11_18"
+OUTPUT_PATH="/inspire/hdd/project/qproject-fundationmodel/public/yiwei/megatron-workspace/experiments/examples"
 TOKENIZER_MODEL="/inspire/hdd/project/qproject-fundationmodel/public/yiwei/ckpts/Qwen3-30B-A3B-Instruct-2507"
 
 # ===== 训练配置 =====
@@ -29,7 +29,6 @@ EVAL_INTERVAL=100
 SEQ_LENGTH=4096
 GBS=1024
 MBS=4
-MODEL_NAME="qwen25_3b"
 
 # ===== 并行配制 =====
 SEQUENCE_PARALLEL="false"
