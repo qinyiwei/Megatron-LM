@@ -158,13 +158,10 @@ TRAINING_ARGS=(
     
     # 【性能优化】
     --cross-entropy-loss-fusion
-    --calculate-per-token-loss
-    --manual-gc
-    --empty-unused-memory-level 1
+    --empty-unused-memory-level 0
     --transformer-impl transformer_engine
     --attention-backend flash
 )
-
 
 MODEL_PARALLEL_ARGS=(
     --tensor-model-parallel-size $TP_SIZE
@@ -189,7 +186,6 @@ DATA_ARGS=(
     # 【Tokenizer】
     --tokenizer-type HuggingFaceTokenizer
     --tokenizer-model $TOKENIZER_MODEL
-    --vocab-size 151936
     
     # 【数据分割】
     --split 99,1,0
@@ -197,12 +193,16 @@ DATA_ARGS=(
     # 【数据加载】
     --data-cache-path ${DATA_CACHE_PATH}
     --num-workers 8
-    --dataloader-type single
+    --dataloader-type cyclic
     --no-mmap-bin-files
     --num-dataset-builder-threads 16
     
     # 【内存优化】
     --no-create-attention-mask-in-dataloader
+
+    # 【文档间attention】
+    # --reset-attention-mask     
+    # --reset-position-ids   
 )
 
 PROFILER_ARGS=(
@@ -210,7 +210,7 @@ PROFILER_ARGS=(
     --use-pytorch-profiler
     --profile-ranks 0              # 指定要profile的rank,默认是[0]
     --profile-step-start 10        # 从第10步开始profile
-    --profile-step-end 11          # 到第13步结束profile
+    --profile-step-end 11          # 到第11步结束profile
 )
 
 EVAL_AND_LOGGING_ARGS=(
@@ -229,10 +229,10 @@ EVAL_AND_LOGGING_ARGS=(
     --ckpt-format torch_dist
     --save "$CHECKPOINT_PATH"
     --load "$ORIG_CHECKPOINT_PATH"
-    --finetune
+    # --finetune
 
-    #--no-load-optim # 不加载优化器状态（因为是新训练）
-    #--no-load-rng   # 不加载随机数状态
+    --no-load-optim # 不加载优化器状态（因为是新训练）
+    --no-load-rng   # 不加载随机数状态
     
     # 【超时保护】
     --distributed-timeout-minutes 60

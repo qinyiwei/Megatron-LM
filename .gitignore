@@ -16,3 +16,6 @@ onelogger.err
 runs/
 /test_cases/
 **/dist/
+scripts/attempts
+scripts/qwen3*
+scripts/qwen25*

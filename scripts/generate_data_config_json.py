@@ -62,7 +62,7 @@ folder_weights = {
     "/inspire/hdd/project/qproject-fundationmodel/liupengfei-24025/ttmi/Temp/Split/DATA_tokenized_qwen/code-final": 598,
     "/inspire/hdd/project/qproject-fundationmodel/liupengfei-24025/ttmi/Temp/Split/DATA_tokenized_qwen/math-final": 458,
 }
-output_path = "/inspire/ssd/project/qproject-fundationmodel/public/yiwei/megatron-workspace/source/Megatron-LM/scripts/examples/dataset_config_stage_1_1.json"
+output_path = "/inspire/ssd/project/qproject-fundationmodel/public/yiwei/megatron-workspace/source/Megatron-LM/scripts/qwen25_3b_from_scratch/dataset_config_stage_1_1.json"
 
 # 生成结果
 result = generate_weighted_json(folder_weights)
