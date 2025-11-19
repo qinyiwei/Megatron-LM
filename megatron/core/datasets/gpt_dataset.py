@@ -360,6 +360,11 @@ class GPTDataset(MegatronDataset):
             log_single_rank(
                 logger,
                 logging.INFO,
+                f"no cache, build from scratch",
+            )
+            log_single_rank(
+                logger,
+                logging.INFO,
                 f"Build and save the {type(self).__name__} {self.index_split.name} indices",
             )
             t_beg = time.time()
@@ -481,6 +486,12 @@ class GPTDataset(MegatronDataset):
             return document_index, sample_index, shuffle_index
 
         log_single_rank(
+                logger,
+                logging.INFO,
+                f"with cache, load from dataset cache"
+        )
+
+        log_single_rank(
             logger, logging.INFO, f"Load the {type(self).__name__} {self.index_split.name} indices"
         )
 
@@ -490,7 +501,7 @@ class GPTDataset(MegatronDataset):
             f"\tLoad the document index from {os.path.basename(path_to_document_index)}",
         )
         t_beg = time.time()
-        document_index = numpy.load(path_to_document_index, allow_pickle=True, mmap_mode="r")
+        document_index = numpy.load(path_to_document_index, allow_pickle=True, mmap_mode=None)
         t_end = time.time()
         log_single_rank(logger, logging.DEBUG, f"\t> time elapsed: {t_end - t_beg:4f} seconds")
 
@@ -500,7 +511,7 @@ class GPTDataset(MegatronDataset):
             f"\tLoad the sample index from {os.path.basename(path_to_sample_index)}",
         )
         t_beg = time.time()
-        sample_index = numpy.load(path_to_sample_index, allow_pickle=True, mmap_mode="r")
+        sample_index = numpy.load(path_to_sample_index, allow_pickle=True, mmap_mode=None)
         t_end = time.time()
         log_single_rank(logger, logging.DEBUG, f"\t> time elapsed: {t_end - t_beg:4f} seconds")
 
@@ -510,7 +521,7 @@ class GPTDataset(MegatronDataset):
             f"\tLoad the shuffle index from {os.path.basename(path_to_shuffle_index)}",
         )
         t_beg = time.time()
-        shuffle_index = numpy.load(path_to_shuffle_index, allow_pickle=True, mmap_mode="r")
+        shuffle_index = numpy.load(path_to_shuffle_index, allow_pickle=True, mmap_mode=None)
         t_end = time.time()
         log_single_rank(logger, logging.DEBUG, f"\t> time elapsed: {t_end - t_beg:4f} seconds")
 
