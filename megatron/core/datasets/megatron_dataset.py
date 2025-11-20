@@ -65,6 +65,70 @@ class MegatronDataset(ABC, torch.utils.data.Dataset):
         self.unique_description_hash = hashlib.md5(
             self.unique_description.encode("utf-8"), usedforsecurity=False
         ).hexdigest()
+        #self.debug_unique_identifiers()
+        
+    def debug_unique_identifiers(self):
+        """打印所有影响哈希值的信息，用于调试哈希不一致问题"""
+        
+        print("=" * 80)
+        print("DEBUG: Unique Identifiers Information")
+        print("=" * 80)
+        
+        # 1. 打印基本标识符
+        print("\n[Basic Identifiers]")
+        print(f"Class: {type(self).__name__}")
+        print(f"Dataset Path: {self.dataset_path}")
+        print(f"Num Samples: {self.num_samples}")
+        print(f"Index Split: {self.index_split.name}")
+        
+        # 2. 打印配置属性
+        print("\n[Config Attributes]")
+        key_attrs = self._key_config_attributes()
+        print(f"Key config attributes: {key_attrs}")
+        for attr in key_attrs:
+            value = getattr(self.config, attr)
+            print(f"  {attr}: {value} (type: {type(value).__name__})")
+        
+        # 3. 打印完整的 unique_identifiers 字典
+        print("\n[Complete Unique Identifiers Dict]")
+        for key, value in self.unique_identifiers.items():
+            if hasattr(value, 'unique_identifiers'):
+                print(f"  {key}: {value} (has unique_identifiers attribute)")
+                print(f"    -> {value.unique_identifiers}")
+            else:
+                print(f"  {key}: {value} (type: {type(value).__name__})")
+        
+        # 4. 打印 JSON 序列化前的字典（用于检查对象引用）
+        print("\n[Dict Before JSON Serialization]")
+        print(f"OrderedDict keys order: {list(self.unique_identifiers.keys())}")
+        
+        # 5. 打印 JSON 描述字符串（逐行）
+        print("\n[JSON Description String]")
+        print("--- START ---")
+        print(self.unique_description)
+        print("--- END ---")
+        
+        # 6. 打印 JSON 字符串的字节表示（前500字符）
+        print("\n[JSON Bytes Representation (first 500 chars)]")
+        json_bytes = self.unique_description.encode("utf-8")
+        print(f"Total bytes length: {len(json_bytes)}")
+        print(f"First 500 bytes: {json_bytes[:500]}")
+        
+        # 7. 打印最终哈希值
+        print("\n[Final Hash]")
+        print(f"MD5 Hash: {self.unique_description_hash}")
+        
+        # 8. 逐个字段重新计算哈希，检查哪个字段导致差异
+        print("\n[Incremental Hash Calculation]")
+        test_dict = OrderedDict()
+        for key, value in self.unique_identifiers.items():
+            test_dict[key] = value
+            test_json = json.dumps(test_dict, indent=4, default=lambda obj: obj.unique_identifiers)
+            test_hash = hashlib.md5(test_json.encode("utf-8"), usedforsecurity=False).hexdigest()
+            print(f"  After adding '{key}': {test_hash[:16]}...")
+        
+        print("\n" + "=" * 80)
+
 
     @staticmethod
     def numel_low_level_dataset(low_level_dataset: LowLevelDataset) -> int:
