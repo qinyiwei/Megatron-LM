@@ -3086,7 +3086,33 @@ def _add_moe_args(parser):
     group.add_argument('--moe-input-jitter-eps', type=float, default=None,
                        help='Add noise to the input tensor by applying jitter with a specified epsilon value.')
     group.add_argument('--moe-per-layer-logging', action='store_true',
-                       help='Enable per-layer logging for MoE, currently supports auxiliary loss and z loss.')
+                       help='[DEPRECATED] Use --moe-log-level-X-interval instead. '
+                       'Enable per-layer logging for MoE, currently supports auxiliary loss and z loss.')
+    
+    # MoE Monitoring arguments (new three-level system)
+    group.add_argument('--moe-log-level-0-interval', type=int, default=None,
+                       help='Interval for Level 0 MoE logging (essential metrics, zero overhead). '
+                       'Records: expert_token_counts, aux_loss. Default: None (disabled). '
+                       'Example: --moe-log-level-0-interval 1')
+    group.add_argument('--moe-log-level-1-interval', type=int, default=None,
+                       help='Interval for Level 1 MoE logging (important metrics, light overhead). '
+                       'Records: drop_rate, expert_load_entropy, router_logits_stats. '
+                       'Default: None (disabled). Example: --moe-log-level-1-interval 10')
+    group.add_argument('--moe-log-level-2-interval', type=int, default=None,
+                       help='Interval for Level 2 MoE logging (raw data storage for debugging). '
+                       'Stores: full expert_token_counts arrays, router_probs samples, '
+                       'expert_grad_norms for post-hoc analysis. NO heavy computation. '
+                       'Default: None (disabled). Example: --moe-log-level-2-interval 100')
+    group.add_argument('--moe-log-level-2-layers', type=str, default=None,
+                       help='Comma-separated layer indices for Level 2 logging. '
+                       'If None, log all MoE layers. Example: "0,15,31"')
+    group.add_argument('--moe-log-level-2-sample-tokens', type=int, default=128,
+                       help='Number of tokens to sample for Level 2 router_probs storage. '
+                       'Default: 128. Set to 0 to disable router_probs sampling.')
+    group.add_argument('--moe-log-level-2-output-dir', type=str, default=None,
+                       help='Directory to save Level 2 raw data files. '
+                       'If None, uses <save_dir>/moe_logs. Ignored if Level 2 logging disabled.')
+    
     # Token dispatcher arguments
     group.add_argument('--moe-token-dispatcher-type', type=str,
                        choices=['allgather', 'alltoall', 'flex'],

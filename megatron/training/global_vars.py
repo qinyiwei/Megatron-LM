@@ -110,6 +110,10 @@ def set_global_variables(args, build_tokenizer=True):
 
     if args.exit_signal_handler:
         _set_signal_handler()
+    
+    # Initialize MoE monitoring if MoE is enabled
+    if hasattr(args, 'num_experts') and args.num_experts is not None:
+        _set_moe_monitor(args)
 
 
 def unset_global_variables():
@@ -267,6 +271,35 @@ def _set_energy_monitor(args):
     global _GLOBAL_ENERGY_MONITOR
     _ensure_var_is_not_initialized(_GLOBAL_ENERGY_MONITOR, 'energy monitor')
     _GLOBAL_ENERGY_MONITOR = EnergyMonitor()
+
+
+def _set_moe_monitor(args):
+    """Initialize MoE monitoring system."""
+    try:
+        from megatron.core.transformer.moe.moe_monitor import initialize_moe_monitor_from_args
+        
+        # Set default Level 2 output directory if not specified
+        if args.moe_log_level_2_interval is not None and args.moe_log_level_2_output_dir is None:
+            if hasattr(args, 'save') and args.save:
+                args.moe_log_level_2_output_dir = os.path.join(args.save, 'moe_logs')
+        
+        # Initialize monitor
+        monitor = initialize_moe_monitor_from_args(args)
+        
+        if monitor is not None and args.rank == 0:
+            print('> initialized MoE monitoring:')
+            if args.moe_log_level_0_interval is not None:
+                print(f'    Level 0 (essential): every {args.moe_log_level_0_interval} iterations')
+            if args.moe_log_level_1_interval is not None:
+                print(f'    Level 1 (important): every {args.moe_log_level_1_interval} iterations')
+            if args.moe_log_level_2_interval is not None:
+                print(f'    Level 2 (raw data): every {args.moe_log_level_2_interval} iterations')
+                if args.moe_log_level_2_layers:
+                    print(f'        Layers: {args.moe_log_level_2_layers}')
+                print(f'        Output dir: {args.moe_log_level_2_output_dir}')
+    except ImportError as e:
+        if args.rank == 0:
+            print(f'Warning: Failed to initialize MoE monitoring: {e}')
 
 
 def _ensure_var_is_initialized(var, name):

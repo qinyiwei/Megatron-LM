@@ -9,6 +9,7 @@ import torch
 from megatron.core import parallel_state, tensor_parallel, utils
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.moe.moe_monitor import record_moe_monitoring_forward_metrics
 from megatron.core.transformer.moe.moe_utils import get_default_pg_collection
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.moe.token_dispatcher import (
@@ -77,16 +78,42 @@ class BaseMoELayer(MegatronModule, ABC):
         self.shared_experts = None
         self.token_dispatcher: Optional[MoETokenDispatcher] = None
         self.layer_number = layer_number
+        
+        # MoE monitoring (initialized when set_layer_number is called)
+        self.moe_monitor = None
 
     @abstractmethod
     def forward(self, hidden_states):
         """Forward method for the MoE layer."""
         pass
+    
+    def _try_init_monitor(self):
+        """Try to initialize MoE monitor if not already done."""
+        if self.moe_monitor is not None:
+            return  # Already initialized
+        
+        if self.layer_number is None:
+            return  # Can't initialize without layer_number
+        
+        try:
+            from megatron.core.transformer.moe.moe_monitor import get_global_moe_monitor
+            global_monitor = get_global_moe_monitor()
+            print(f"[MoELayer._try_init_monitor] layer_number={self.layer_number}, global_monitor={global_monitor}")
+            if global_monitor is not None:
+                self.moe_monitor = global_monitor.get_layer_monitor(self.layer_number)
+                print(f"[MoELayer._try_init_monitor] Successfully created monitor for layer {self.layer_number}")
+        except Exception as e:
+            print(f"[MoELayer._try_init_monitor] Exception: {e}")
+            import traceback
+            traceback.print_exc()
 
     def set_layer_number(self, layer_number: int):
         """Set the layer number for the MoE layer."""
         self.layer_number = layer_number
         self.router.set_layer_number(layer_number)
+        
+        # Initialize monitor now that we have a layer_number
+        self._try_init_monitor()
 
 
 class MoELayer(BaseMoELayer):
@@ -176,6 +203,9 @@ class MoELayer(BaseMoELayer):
         """
         residual = hidden_states
         probs, routing_map = self.router(hidden_states)
+        monitoring_state = self.router.consume_moe_monitoring_state()
+        if self.training:
+            self._record_moe_monitoring_metrics(monitoring_state)
         hidden_states, probs = self.token_dispatcher.dispatch_preprocess(
             hidden_states, routing_map, probs
         )
@@ -290,9 +320,42 @@ class MoELayer(BaseMoELayer):
                 output, mlp_bias = tensor_parallel.checkpoint(custom_forward, False, hidden_states)
         else:
             output, mlp_bias = custom_forward(hidden_states)
-
+        
         return output, mlp_bias
 
+    def _record_moe_monitoring_metrics(self, monitoring_state: Optional[dict]):
+        if (
+            monitoring_state is None
+            or self.moe_monitor is None
+            or not self.moe_monitor.is_enabled()
+        ):
+            return
+        try:
+            from megatron.training import get_args
+
+            args = get_args()
+            iteration = args.iteration if hasattr(args, "iteration") else 0
+        except Exception:
+            iteration = 0
+
+        sample_probs = monitoring_state.get("router_probs_sample")
+        sample_routes = monitoring_state.get("routing_decisions_sample")
+        sample_data = None
+        if sample_probs is not None or sample_routes is not None:
+            sample_data = {
+                "router_probs": sample_probs,
+                "routing_decisions": sample_routes,
+            }
+
+        record_moe_monitoring_forward_metrics(
+            layer_id=self.layer_number,
+            iteration=iteration,
+            pre_counts=monitoring_state["pre_counts"],
+            kept_tokens=monitoring_state["kept_tokens"],
+            router_prob_stats=monitoring_state.get("router_prob_stats"),
+            sample_data=sample_data,
+        )
+    
     def backward_dw(self):
         """Compute weight gradients for experts and shared experts."""
         self.experts.backward_dw()

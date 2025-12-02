@@ -88,6 +88,7 @@ from megatron.training.utils import get_batch_on_this_cp_rank, get_batch_on_this
 from megatron.legacy.data.data_samplers import build_pretraining_data_loader
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.transformer.moe import upcycling_utils
+from megatron.core.transformer.moe.moe_monitor import ingest_moe_monitoring_forward_metrics
 from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 from megatron.core.parallel_state import (
@@ -1543,6 +1544,22 @@ def training_log(
             moe_layer_freq=args.moe_layer_freq,
             mtp_num_layers=args.mtp_num_layers,
         )
+
+        ingest_moe_monitoring_forward_metrics(iteration)
+
+        # New MoE monitoring system
+        try:
+            from megatron.core.transformer.moe.moe_monitor import get_global_moe_monitor
+            moe_monitor = get_global_moe_monitor()
+            if moe_monitor is not None and moe_monitor.is_enabled():
+                # Write all layer metrics to TensorBoard
+                moe_monitor.write_all_to_tensorboard(writer, iteration)
+                
+                # Save Level 2 data if needed
+                if args.moe_log_level_2_interval is not None:
+                    moe_monitor.save_all_level_2_data(iteration)
+        except ImportError:
+            pass  # MoE monitoring not available
     if args.mtp_num_layers is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
         MTPLossLoggingHelper.track_mtp_metrics(

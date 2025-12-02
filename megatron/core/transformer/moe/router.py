@@ -21,6 +21,10 @@ from megatron.core.transformer.moe.moe_utils import (
     z_loss_func,
 )
 from megatron.core.transformer.transformer_config import TransformerConfig
+try:
+    from megatron.training import get_args as _get_moe_monitor_args
+except ImportError:
+    _get_moe_monitor_args = None
 
 
 class Router(ABC, MegatronModule):
@@ -154,6 +158,7 @@ class TopKRouter(Router):
         self.routing_type = self.config.moe_router_load_balancing_type
         self.score_function = self.config.moe_router_score_function
         self.input_jitter = None
+        self._moe_monitoring_state = None
 
         self.enable_expert_bias = self.config.moe_router_enable_expert_bias
         if self.enable_expert_bias:
@@ -374,6 +379,139 @@ class TopKRouter(Router):
         )
         return probs
 
+    def _start_moe_monitoring_state(self, probs: torch.Tensor, routing_map: torch.Tensor):
+        with torch.no_grad():
+            pre_counts = routing_map.sum(dim=0).float()
+            probs_float = probs.detach().float()
+            prob_stats = self._compute_router_prob_stats(probs_float)
+            self._moe_monitoring_state = {
+                "pre_counts": pre_counts.detach(),
+                "router_prob_stats": prob_stats,
+            }
+
+    def _finalize_moe_monitoring_state(
+        self, routing_map: torch.Tensor, routing_probs: torch.Tensor
+    ):
+        if self._moe_monitoring_state is None:
+            return
+        with torch.no_grad():
+            kept_tokens = routing_map.sum(dim=0).float().sum()
+            self._moe_monitoring_state["kept_tokens"] = kept_tokens.detach()
+            sample_tokens = self._get_moe_monitor_sample_tokens()
+            if routing_probs is not None and sample_tokens > 0:
+                num_tokens = routing_probs.shape[0]
+                sample_tokens = min(sample_tokens, num_tokens)
+                if sample_tokens > 0:
+                    indices = torch.randperm(num_tokens, device=routing_probs.device)[:sample_tokens]
+                    sampled_probs = routing_probs[indices].detach().cpu()
+                    topk = min(self.topk, routing_probs.shape[1])
+                    sampled_routes = (
+                        torch.topk(routing_probs[indices], k=topk, dim=-1).indices.detach().cpu()
+                    )
+                    self._moe_monitoring_state["router_probs_sample"] = sampled_probs.numpy()
+                    self._moe_monitoring_state["routing_decisions_sample"] = sampled_routes.numpy()
+
+    def consume_moe_monitoring_state(self):
+        state = self._moe_monitoring_state
+        self._moe_monitoring_state = None
+        return state
+
+    def _get_moe_monitor_sample_tokens(self) -> int:
+        if _get_moe_monitor_args is None:
+            return 0
+        try:
+            args = _get_moe_monitor_args()
+        except Exception:
+            return 0
+        return getattr(args, "moe_log_level_2_sample_tokens", 0) or 0
+
+    def _compute_router_prob_stats(self, router_probs: torch.Tensor):
+        if router_probs.numel() == 0:
+            return {
+                "top1_sum": 0.0,
+                "top1_sumsq": 0.0,
+                "top1_min": float("inf"),
+                "top1_max": float("-inf"),
+                "top1_count": 0.0,
+                "top2_sum": 0.0,
+                "top2_count": 0.0,
+                "top1_top2_ratio_sum": 0.0,
+                "top1_top2_ratio_sumsq": 0.0,
+                "top1_top2_ratio_min": float("inf"),
+                "top1_top2_ratio_max": float("-inf"),
+                "top1_top2_ratio_count": 0.0,
+                "topk_prob_sum_sum": 0.0,
+                "topk_prob_sum_count": 0.0,
+                "entropy_sum": 0.0,
+                "entropy_sumsq": 0.0,
+                "entropy_min": float("inf"),
+                "entropy_max": float("-inf"),
+                "entropy_count": 0.0,
+                "effective_sum": 0.0,
+                "effective_count": 0.0,
+                "prob_var_sum": 0.0,
+                "prob_var_count": 0.0,
+            }
+
+        topk = min(max(2, self.topk), router_probs.shape[1])
+        topk_probs = torch.topk(router_probs, k=topk, dim=-1, sorted=False)[0]
+        top1 = topk_probs[:, 0]
+        stats = {
+            "top1_sum": float(top1.sum().item()),
+            "top1_sumsq": float((top1**2).sum().item()),
+            "top1_min": float(top1.min().item()),
+            "top1_max": float(top1.max().item()),
+            "top1_count": float(top1.numel()),
+            "top2_sum": 0.0,
+            "top2_count": 0.0,
+            "top1_top2_ratio_sum": 0.0,
+            "top1_top2_ratio_sumsq": 0.0,
+            "top1_top2_ratio_min": float("inf"),
+            "top1_top2_ratio_max": float("-inf"),
+            "top1_top2_ratio_count": 0.0,
+            "topk_prob_sum_sum": 0.0,
+            "topk_prob_sum_count": 0.0,
+        }
+
+        if topk >= 2:
+            top2 = topk_probs[:, 1]
+            ratio = top1 / (top2 + 1e-10)
+            topk_sum = topk_probs.sum(dim=-1)
+            stats.update(
+                {
+                    "top2_sum": float(top2.sum().item()),
+                    "top2_count": float(top2.numel()),
+                    "top1_top2_ratio_sum": float(ratio.sum().item()),
+                    "top1_top2_ratio_sumsq": float((ratio**2).sum().item()),
+                    "top1_top2_ratio_min": float(ratio.min().item()),
+                    "top1_top2_ratio_max": float(ratio.max().item()),
+                    "top1_top2_ratio_count": float(ratio.numel()),
+                    "topk_prob_sum_sum": float(topk_sum.sum().item()),
+                    "topk_prob_sum_count": float(topk_sum.numel()),
+                }
+            )
+
+        entropy = -(router_probs * torch.log(router_probs + 1e-10)).sum(dim=-1)
+        stats.update(
+            {
+                "entropy_sum": float(entropy.sum().item()),
+                "entropy_sumsq": float((entropy**2).sum().item()),
+                "entropy_min": float(entropy.min().item()),
+                "entropy_max": float(entropy.max().item()),
+                "entropy_count": float(entropy.numel()),
+            }
+        )
+
+        effective = torch.exp(entropy)
+        stats["effective_sum"] = float(effective.sum().item())
+        stats["effective_count"] = float(effective.numel())
+
+        prob_var = router_probs.var(dim=-1, unbiased=False)
+        stats["prob_var_sum"] = float(prob_var.sum().item())
+        stats["prob_var_count"] = float(prob_var.numel())
+
+        return stats
+
     def attach_and_log_load_balancing_loss(
         self,
         activation: torch.Tensor,
@@ -499,6 +637,8 @@ class TopKRouter(Router):
                 fused=self.config.moe_router_fusion,
             )
 
+        self._start_moe_monitoring_state(probs, routing_map)
+
         # Apply token dropping to probs and routing_map.
         if self.config.moe_expert_capacity_factor is not None:
             probs, routing_map = apply_router_token_dropping(
@@ -509,6 +649,8 @@ class TopKRouter(Router):
                 drop_policy=self.config.moe_token_drop_policy,
                 pad_to_capacity=self.config.moe_pad_expert_input_to_capacity,
             )
+
+        self._finalize_moe_monitoring_state(routing_map, probs)
 
         # Apply each aux loss type and attach aux loss autograd function to probs
         if self.training and torch.is_grad_enabled() and self.is_aux_loss_enabled():
