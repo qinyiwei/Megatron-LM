@@ -338,22 +338,11 @@ class MoELayer(BaseMoELayer):
         except Exception:
             iteration = 0
 
-        sample_probs = monitoring_state.get("router_probs_sample")
-        sample_routes = monitoring_state.get("routing_decisions_sample")
-        sample_data = None
-        if sample_probs is not None or sample_routes is not None:
-            sample_data = {
-                "router_probs": sample_probs,
-                "routing_decisions": sample_routes,
-            }
-
         record_moe_monitoring_forward_metrics(
             layer_id=self.layer_number,
             iteration=iteration,
             pre_counts=monitoring_state["pre_counts"],
             kept_tokens=monitoring_state["kept_tokens"],
-            router_prob_stats=monitoring_state.get("router_prob_stats"),
-            sample_data=sample_data,
         )
     
     def backward_dw(self):

@@ -1554,10 +1554,6 @@ def training_log(
             if moe_monitor is not None and moe_monitor.is_enabled():
                 # Write all layer metrics to TensorBoard
                 moe_monitor.write_all_to_tensorboard(writer, iteration)
-                
-                # Save Level 2 data if needed
-                if args.moe_log_level_2_interval is not None:
-                    moe_monitor.save_all_level_2_data(iteration)
         except ImportError:
             pass  # MoE monitoring not available
     if args.mtp_num_layers is not None:

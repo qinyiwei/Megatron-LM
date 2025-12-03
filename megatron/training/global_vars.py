@@ -277,26 +277,12 @@ def _set_moe_monitor(args):
     """Initialize MoE monitoring system."""
     try:
         from megatron.core.transformer.moe.moe_monitor import initialize_moe_monitor_from_args
-        
-        # Set default Level 2 output directory if not specified
-        if args.moe_log_level_2_interval is not None and args.moe_log_level_2_output_dir is None:
-            if hasattr(args, 'save') and args.save:
-                args.moe_log_level_2_output_dir = os.path.join(args.save, 'moe_logs')
-        
-        # Initialize monitor
         monitor = initialize_moe_monitor_from_args(args)
         
         if monitor is not None and args.rank == 0:
             print('> initialized MoE monitoring:')
             if args.moe_log_level_0_interval is not None:
                 print(f'    Level 0 (essential): every {args.moe_log_level_0_interval} iterations')
-            if args.moe_log_level_1_interval is not None:
-                print(f'    Level 1 (important): every {args.moe_log_level_1_interval} iterations')
-            if args.moe_log_level_2_interval is not None:
-                print(f'    Level 2 (raw data): every {args.moe_log_level_2_interval} iterations')
-                if args.moe_log_level_2_layers:
-                    print(f'        Layers: {args.moe_log_level_2_layers}')
-                print(f'        Output dir: {args.moe_log_level_2_output_dir}')
     except ImportError as e:
         if args.rank == 0:
             print(f'Warning: Failed to initialize MoE monitoring: {e}')
