@@ -23,7 +23,13 @@ from megatron.core.transformer.moe.moe_utils import (
 )
 from megatron.core.transformer.moe.router_replay import RouterReplay
 from megatron.core.transformer.transformer_config import TransformerConfig
-
+try:
+    from megatron.core.transformer.moe.moe_monitor import (
+        is_moe_monitoring_enabled as _is_moe_monitoring_enabled,
+    )
+except ImportError:
+    def _is_moe_monitoring_enabled() -> bool:
+        return False
 
 class Router(ABC, MegatronModule):
     """Base Router class"""
@@ -158,6 +164,7 @@ class TopKRouter(Router):
         self.routing_type = self.config.moe_router_load_balancing_type
         self.score_function = self.config.moe_router_score_function
         self.input_jitter = None
+        self._moe_monitoring_state = None
 
         self.enable_expert_bias = self.config.moe_router_enable_expert_bias
         if self.enable_expert_bias:
@@ -413,6 +420,30 @@ class TopKRouter(Router):
         )
         return probs
 
+    def _start_moe_monitoring_state(self, probs: torch.Tensor, routing_map: torch.Tensor):
+        with torch.no_grad():
+            pre_counts = routing_map.sum(dim=0).float()
+            self._moe_monitoring_state = {
+                "pre_counts": pre_counts.detach(),
+            }
+
+    def _finalize_moe_monitoring_state(
+        self, routing_map: torch.Tensor, routing_probs: torch.Tensor
+    ):
+        if self._moe_monitoring_state is None:
+            return
+        with torch.no_grad():
+            kept_tokens = routing_map.sum(dim=0).float().sum()
+            self._moe_monitoring_state["kept_tokens"] = kept_tokens.detach()
+
+    def consume_moe_monitoring_state(self):
+        state = self._moe_monitoring_state
+        self._moe_monitoring_state = None
+        return state
+
+    def _should_collect_moe_monitoring(self) -> bool:
+        return _is_moe_monitoring_enabled()
+
     def attach_and_log_load_balancing_loss(
         self,
         activation: torch.Tensor,
@@ -582,6 +613,10 @@ class TopKRouter(Router):
                 fused=self.config.moe_router_fusion,
                 router_replay=self.router_replay,
             )
+        
+        collect_moe_metrics = self._should_collect_moe_monitoring()
+        if collect_moe_metrics:
+            self._start_moe_monitoring_state(probs, routing_map)
 
         # Apply token dropping to probs and routing_map.
         if self.config.moe_expert_capacity_factor is not None:
@@ -593,6 +628,9 @@ class TopKRouter(Router):
                 drop_policy=self.config.moe_token_drop_policy,
                 pad_to_capacity=self.config.moe_pad_expert_input_to_capacity,
             )
+
+        if collect_moe_metrics:
+            self._finalize_moe_monitoring_state(routing_map, probs)
 
         # Apply each aux loss type and attach aux loss autograd function to probs
         if self.training and torch.is_grad_enabled() and self.is_aux_loss_enabled():

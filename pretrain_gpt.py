@@ -10,6 +10,7 @@ import json
 
 # Suppress warnings on all ranks but rank 0.
 import os
+import glob
 import warnings
 rank = int(os.environ.get('RANK', 0))
 if rank != 0:
@@ -210,12 +211,132 @@ def is_dataset_built_on_rank(vp_stage=None):
         or mtp_on_this_rank(config, ignore_virtual=False, vp_stage=vp_stage)
     ) and parallel_state.get_tensor_model_parallel_rank() == 0
 
+# custom data load
+def parse_dataset_config(config_file):
+    """解析数据集配置，支持config file"""
+    import json
+    try:
+        if not os.path.exists(config_file):
+            raise FileNotFoundError(f"配置文件不存在: {config_file}")
+        
+        print(f"📄 读取配置文件: {config_file}")
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        
+        print(f"📊 使用JSON文件配置，包含 {len(config)} 个数据集")
+        for i, cfg in enumerate(config):
+            print(f"   [{i+1}] {cfg['path']} (权重: {cfg['weight']})")
+        return config
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON文件格式错误: {e}")
+    except Exception as e:
+        raise ValueError(f"读取配置文件失败: {e}")
+
+
+def generate_dataset_paths(config_file, pattern="_text_document"):
+    """
+    生成NeMo数据集路径列表，支持带权重配置
+    
+    Args:
+        config_file: data config file
+        pattern: 文件名模式，默认为"_text_document"
+    
+    Returns:
+        list: Megatron格式的路径列表 ["weight1", "path1", "weight2", "path2", ...]
+    """
+    # 解析配置
+    dataset_config = parse_dataset_config(config_file)
+    
+    # 检查所有目录是否存在
+    print(f"📁 验证数据集目录...")
+    for config in dataset_config:
+        data_dir = config["path"]
+        if not os.path.exists(data_dir):
+            raise FileNotFoundError(f"数据目录不存在: {data_dir}")
+        print(f"   ✅ {data_dir}")
+    
+    dataset_paths = []
+    
+    # 为每个目录生成文件级别的路径
+    total_files = 0
+    for config in dataset_config:
+        data_dir = config["path"]
+        folder_weight = config["weight"]
+        
+        print(f"\n📁 处理目录: {data_dir} (权重: {folder_weight})")
+        
+        # 搜索该目录下的.bin文件
+        bin_files = glob.glob(os.path.join(data_dir, "**", "*_text_document.bin"), recursive=True)
+        
+        if not bin_files:
+            print(f"   ⚠️  警告: 未找到任何.bin文件")
+            continue
+        
+        valid_files = []
+        file_sizes = []
+        
+        for bin_file in sorted(bin_files):
+            # 检查文件大小
+            bin_size = os.path.getsize(bin_file)
+            if bin_size == 0:
+                continue
+                
+            # 检查对应的.idx文件是否存在
+            idx_file = bin_file.replace(".bin", ".idx")
+            if not os.path.exists(idx_file) or os.path.getsize(idx_file) == 0:
+                continue
+            
+            # 提取路径前缀
+            prefix = bin_file.replace(f"{pattern}.bin", "")
+            valid_files.append(prefix + pattern)
+            file_sizes.append(bin_size)
+        
+        if not valid_files:
+            print(f"   ❌ 该目录下没有有效的数据文件")
+            continue
+        
+        print(f"   ✅ 找到 {len(valid_files)} 个有效文件")
+        
+        # 计算总大小
+        total_size = sum(file_sizes)
+        
+        if total_size == 0:
+            print(f"   ❌ 该目录下文件总大小为0")
+            continue
+        
+        # 按文件大小分配权重
+        for file_path, file_size in zip(valid_files, file_sizes):
+            # 按文件大小比例分配权重
+            file_weight = folder_weight * (file_size / total_size)
+            dataset_paths.extend([str(file_weight), file_path])
+        
+        total_files += len(valid_files)
+        
+        # 显示文件大小统计
+        total_size_mb = total_size / (1024 * 1024)
+        print(f"   📊 总大小: {total_size_mb:.2f} MB")
+    
+    if not dataset_paths:
+        raise FileNotFoundError(f"未找到有效的数据集文件")
+    
+    print(f"\n✅ 总计: {total_files} 个有效文件，生成 {len(dataset_paths)//2} 个带权重的数据集条目")
+    
+    # 验证权重总和
+    weights = [float(dataset_paths[i]) for i in range(0, len(dataset_paths), 2)]
+    weight_sum = sum(weights)
+    print(f"📊 权重总和: {weight_sum:.6f}")
+    
+    return dataset_paths
+
+
 
 def core_gpt_dataset_config_from_args(args):
     if args.legacy_tokenizer:
         tokenizer = get_tokenizer()
     else:
         tokenizer = build_tokenizer(args)
+
+    args.data_path = generate_dataset_paths(args.data_path[0])
 
     # Sometimes --data-path is too long, instead we parse it from a file.
     blend: Optional[Tuple[List[str], Optional[List[float]]]]

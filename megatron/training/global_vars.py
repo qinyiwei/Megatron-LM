@@ -116,6 +116,9 @@ def set_global_variables(args, build_tokenizer=True):
     if args.disable_jit_fuser:
         disable_jit_fuser()
 
+    # Initialize MoE monitoring if MoE is enabled
+    if hasattr(args, 'num_experts') and args.num_experts is not None:
+        _set_moe_monitor(args)
 
 def unset_global_variables():
     """Unset global vars.
@@ -273,6 +276,19 @@ def _set_energy_monitor(args):
     _ensure_var_is_not_initialized(_GLOBAL_ENERGY_MONITOR, 'energy monitor')
     _GLOBAL_ENERGY_MONITOR = EnergyMonitor()
 
+def _set_moe_monitor(args):
+    """Initialize MoE monitoring system."""
+    try:
+        from megatron.core.transformer.moe.moe_monitor import initialize_moe_monitor_from_args
+        monitor = initialize_moe_monitor_from_args(args)
+
+        if monitor is not None and args.rank == 0:
+            print('> initialized MoE monitoring:')
+            if args.moe_log_level_0_interval is not None:
+                print(f'    Level 0 (essential): every {args.moe_log_level_0_interval} iterations')
+    except ImportError as e:
+        if args.rank == 0:
+            print(f'Warning: Failed to initialize MoE monitoring: {e}')
 
 def _ensure_var_is_initialized(var, name):
     """Make sure the input variable is not None."""

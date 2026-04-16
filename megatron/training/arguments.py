@@ -1016,6 +1016,10 @@ def validate_args(args, defaults={}):
     if args.num_experts is not None and args.moe_ffn_hidden_size is None:
         args.moe_ffn_hidden_size = args.ffn_hidden_size
         warn_rank_0("moe_ffn_hidden_size is not set, using ffn_hidden_size for MoE instead.")
+    if args.moe_log_level_0_interval is not None:
+        assert args.moe_log_level_0_interval > 0, (
+            '--moe-log-level-0-interval must be greater than 0.'
+        )
 
     # Context parallel
     if args.context_parallel_size > 1:
@@ -2718,6 +2722,11 @@ def _add_moe_args(parser):
                        help="some MoE routers have a D2H sync that will break cuda graphs.  If this flag is set the router will switch" \
                        " to dropping and padding during decode time which does not have a D2H sync. The capacity factor is set to the" \
                        " max that an expert could see during inference so no tokens are actually dropped.")
+    group.add_argument('--moe-log-level-0-interval', type=int, default=None,
+                       help='Interval for Level 0 MoE monitoring. '
+                       'Records expert load metrics such as token-count distribution and drop rate. '
+                       'Default: None (disabled). '
+                       'Example: --moe-log-level-0-interval 1')
     return parser
 
 def _add_mla_args(parser):

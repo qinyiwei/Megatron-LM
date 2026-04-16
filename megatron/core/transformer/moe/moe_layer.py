@@ -11,6 +11,7 @@ import torch
 from megatron.core import parallel_state, tensor_parallel, utils
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.moe.moe_monitor import record_moe_monitoring_forward_metrics
 from megatron.core.transformer.moe.moe_utils import (
     MoECudaGraphPartialCaptureSignal,
     MoECudaGraphTensorStore,
@@ -115,15 +116,37 @@ class BaseMoELayer(MegatronModule, ABC):
         self.token_dispatcher: Optional[MoETokenDispatcher] = None
         self.layer_number = layer_number
 
+        # MoE monitoring (initialized when set_layer_number is called)
+        self.moe_monitor = None
+
     @abstractmethod
     def forward(self, hidden_states):
         """Forward method for the MoE layer."""
         pass
 
+    def _try_init_monitor(self):
+        """Try to initialize MoE monitor if not already done."""
+        if self.moe_monitor is not None:
+            return  # Already initialized
+
+        if self.layer_number is None:
+            return  # Can't initialize without layer_number
+
+        try:
+            from megatron.core.transformer.moe.moe_monitor import get_global_moe_monitor
+            global_monitor = get_global_moe_monitor()
+            if global_monitor is not None:
+                self.moe_monitor = global_monitor.get_layer_monitor(self.layer_number)
+        except Exception:
+            return
+
     def set_layer_number(self, layer_number: int):
         """Set the layer number for the MoE layer."""
         self.layer_number = layer_number
         self.router.set_layer_number(layer_number)
+
+        # Initialize monitor now that we have a layer_number
+        self._try_init_monitor()
 
 
 class MoELayer(BaseMoELayer):
@@ -351,6 +374,9 @@ class MoELayer(BaseMoELayer):
         """This method is a combined method of route and preprocess. Deprecated."""
 
         probs, routing_map = self.route(hidden_states)
+        monitoring_state = self.router.consume_moe_monitoring_state()
+        if self.training:
+            self._record_moe_monitoring_metrics(monitoring_state)
         hidden_states, probs, residual = self.preprocess(hidden_states, probs, routing_map)
         return hidden_states, probs, residual
 
@@ -391,6 +417,9 @@ class MoELayer(BaseMoELayer):
                 if "route" in self.fwd_execution_map:
                     shared_expert_output = self.shared_experts_compute(hidden_states)
                     probs, routing_map = self.route(hidden_states, padding_mask)
+                    monitoring_state = self.router.consume_moe_monitoring_state()
+                    if self.training:
+                        self._record_moe_monitoring_metrics(monitoring_state)
                     hidden_states, probs = self.preprocess(hidden_states, probs, routing_map)
 
                     if intermediate_tensors is not None:
@@ -448,6 +477,28 @@ class MoELayer(BaseMoELayer):
             outputs = custom_forward(hidden_states, intermediate_tensors, padding_mask)
 
         return outputs
+    
+    def _record_moe_monitoring_metrics(self, monitoring_state: Optional[dict]):
+        if (
+            monitoring_state is None
+            or self.moe_monitor is None
+            or not self.moe_monitor.is_enabled()
+        ):
+            return
+        try:
+            from megatron.training import get_args
+
+            args = get_args()
+            iteration = args.iteration if hasattr(args, "iteration") else 0
+        except Exception:
+            iteration = 0
+
+        record_moe_monitoring_forward_metrics(
+            layer_id=self.layer_number,
+            iteration=iteration,
+            pre_counts=monitoring_state["pre_counts"],
+            kept_tokens=monitoring_state["kept_tokens"],
+        )
 
     def backward_dw(self, routed_experts: bool = True, shared_experts: bool = False):
         """Compute weight gradients for experts and shared experts."""
